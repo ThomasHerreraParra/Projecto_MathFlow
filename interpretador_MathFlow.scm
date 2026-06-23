@@ -1,34 +1,71 @@
 #lang eopl
 
 ;******************************************************************************************
-;;;;; Interpretador para lenguaje con condicionales, ligadura local, procedimientos,
-;;;;; procedimientos recursivos, ejecución secuencial y asignación de variables
-
 ;; La definición BNF para las expresiones del lenguaje:
+;; <program> ::= <expression>
+;;               <a-program(body)>
 ;;
-;;  <program>       ::= <expression>
-;;                      <a-program (exp)>
-;;  <expression>    ::= <number>
-;;                      <lit-exp (datum)>
-;;                  ::= <identifier>
-;;                      <var-exp (id)>
-;;                  ::= <primitive> ({<expression>}*(,))
-;;                      <primapp-exp (prim rands)>
-;;                  ::= if <expresion> then <expresion> else <expression>
-;;                      <if-exp (exp1 exp2 exp23)>
-;;                  ::= let {<identifier> = <expression>}* in <expression>
-;;                      <let-exp (ids rands body)>
-;;                  ::= proc({<identificador>}*(,)) <expression>
-;;                      <proc-exp (ids body)>
-;;                  ::= (<expression> {<expression>}*)
-;;                      <app-exp proc rands>
-;;                  ::= letrec  {identifier ({identifier}*(,)) = <expression>}* in <expression>
-;;                     <letrec-exp(proc-names idss bodies bodyletrec)>
-;;                  ::= begin <expression> {; <expression>}* end
-;;                     <begin-exp (exp exps)>
-;;                  ::= set <identifier> = <expression>
-;;                     <set-exp (id rhsexp)>
-;;  <primitive>     ::= + | - | * | add1 | sub1 
+;; <expression> ::= <number>
+;;                  <lit-exp(datum)>
+;;
+;;              ::= <string>
+;;                  <string-exp(s)>
+;;
+;;              ::= true
+;;                  <true-exp>
+;;
+;;              ::= false
+;;                  <false-exp>
+;;
+;;              ::= null
+;;                  <null-exp>
+;;
+;;              ::= <identifier>
+;;                  <id-exp(id, id-var-tail)>
+;;
+;;              ::= <identifier> = <expression>
+;;                  <id-exp(id, id-assign-tail)>
+;;
+;;              ::= <identifier>(<expression> {, <expression>}*)
+;;                  <id-exp(id, id-call-tail)>
+;;
+;;              ::= if <expression> then <expression> else <expression> end
+;;                  <if-exp(test-exp true-exp false-exp)>
+;;
+;;              ::= begin <expression> {; <expression>}* end
+;;                  <begin-exp(exp exps)>
+;;
+;;              ::= var <identifier> = <expression>
+;;                  <var-decl-exp(id rhs)>
+;;
+;;              ::= const <identifier> = <expression>
+;;                  <const-decl-exp(id rhs)>
+;;
+;;              ::= while <expression> do <expression> done
+;;                  <while-exp(test-exp body-exp)>
+;;
+;;              ::= for <identifier> in <expression> do <expression> done
+;;                  <for-exp(id list-exp body-exp)>
+;;
+;;              ::= func <identifier>(<identifier> {, <identifier>}*) {
+;;                     {<expression> ;}*
+;;                     {return <expression> ;}*
+;;                  }
+;;                  <func-def-exp(name params body-exps return-exps)>
+;;
+;;              ::= print(<expression>)
+;;                  <print-exp(exp)>
+;;
+;;              ::= (<expression> <primitive> <expression>)
+;;                  <primitive-exp(left op right)>
+;;
+;;              ::= add1(<expression>)
+;;                  <add1-exp(exp)>
+;;
+;;              ::= sub1(<expression>)
+;;                  <sub1-exp(exp)>
+;;
+;; <primitive> ::= + | - | * | / | % | == | <> | < | > | <= | >= | and | or
 
 ;******************************************************************************************
 
@@ -45,91 +82,88 @@
   (number
    (digit (arbno digit)) number)
   (number
-   ("-" digit (arbno digit)) number)))
+   ("-" digit (arbno digit)) number)
+  (number
+     (digit (arbno digit) "." (arbno digit)) number)
+  (number
+     ("-" digit (arbno digit) "." (arbno digit)) number)
+  (string
+     ("\"" (arbno (not #\")) "\"") string)))
 
 ;Especificación Sintáctica (gramática)
 
 (define grammar-simple-interpreter
   '((program (expression) a-program)
     (expression (number) lit-exp)
-    (expression (identifier) var-exp)
-    (expression
-     (primitive "(" (separated-list expression ",")")")
-     primapp-exp)
-    (expression ("if" expression "then" expression "else" expression)
-                if-exp)
-    (expression ("let" (arbno identifier "=" expression) "in" expression)
-                let-exp)
-    (expression ("proc" "(" (arbno identifier) ")" expression)
-                proc-exp)
-    (expression ( "(" expression (arbno expression) ")")
-                app-exp)
-    (expression ("letrec" (arbno identifier "(" (separated-list identifier ",") ")" "=" expression)  "in" expression) 
-                letrec-exp)
     
-    ; características adicionales
+    (expression (identifier id-tail) id-exp)
+    (id-tail ("(" expression (arbno "," expression) ")") id-call-tail)
+    (id-tail ("=" expression) id-assign-tail)
+    (id-tail () id-var-tail)
+    
+    (expression (string) string-exp)
+    (expression ("true") true-exp)
+    (expression ("false") false-exp)
+    (expression ("null") null-exp)
+    
+    (expression ("if" expression "then" expression "else" expression "end")
+                if-exp)
+
     (expression ("begin" expression (arbno ";" expression) "end")
                 begin-exp)
-    (expression ("set" identifier "=" expression)
-                set-exp)
+
+    (expression
+     ("var" identifier "=" expression)
+     var-decl-exp)
+
+    (expression
+     ("const" identifier "=" expression)
+     const-decl-exp)
+
+    (expression
+     ("while" expression "do" expression "done")
+     while-exp)
+
+    (expression
+     ("for" identifier "in" expression "do" expression "done")
+     for-exp)
+
+    (expression
+     ("func" identifier "(" identifier (arbno "," identifier) ")" "{"
+             (arbno expression ";")
+             (arbno "return" expression ";")
+             "}")
+     func-def-exp)
+
+    (expression
+     ("print" "(" expression ")")
+     print-exp)
+
     ;;;;;;
 
-    (primitive ("+") add-prim)
-    (primitive ("-") substract-prim)
-    (primitive ("*") mult-prim)
-    (primitive ("add1") incr-prim)
-    (primitive ("sub1") decr-prim)))
+    (expression ("(" expression primitive expression ")") primitive-exp)
+
+    (primitive  ("+") add-op)
+    (primitive  ("-") sub-op)
+    (primitive  ("*") mul-op)
+    (primitive  ("/") div-op)
+    (primitive  ("%") mod-op)
+    (primitive  ("==") eq-op)
+    (primitive  ("<>") neq-op)
+    (primitive  ("<") lt-op)
+    (primitive  (">") gt-op)
+    (primitive  ("<=") lte-op)
+    (primitive  (">=") gte-op)
+    (primitive  ("and") and-op)
+    (primitive  ("or") or-op)
+
+    (expression ("add1" "(" expression ")") add1-exp)
+    (expression ("sub1" "(" expression ")") sub1-exp)
+
+    ))
 
 
 ;Tipos de datos para la sintaxis abstracta de la gramática
-
-;Construidos manualmente:
-
-;(define-datatype program program?
-;  (a-program
-;   (exp expression?)))
-;
-;(define-datatype expression expression?
-;  (lit-exp
-;   (datum number?))
-;  (var-exp
-;   (id symbol?))
-;  (primapp-exp
-;   (prim primitive?)
-;   (rands (list-of expression?)))
-;  (if-exp
-;   (test-exp expression?)
-;   (true-exp expression?)
-;   (false-exp expression?))
-;  (let-exp
-;   (ids (list-of symbol?))
-;   (rans (list-of expression?))
-;   (body expression?))
-;  (proc-exp
-;   (ids (list-of symbol?))
-;   (body expression?))
-;  (app-exp
-;   (proc expression?)
-;   (args (list-of expression?)))
-;  (letrec-exp
-;   (proc-names (list-of symbol?))
-;   (idss (list-of (list-of symbol?)))
-;   (bodies (list-of expression?))
-;   (body-letrec expression?))
-;  (begin-exp
-;   (exp expression?)
-;   (exps (list-of expression?)))
-;  (set-exp
-;   (id symbol?)
-;   (rhs expression?)))
-;
-;(define-datatype primitive primitive?
-;  (add-prim)
-;  (substract-prim)
-;  (mult-prim)
-;  (incr-prim)
-;  (decr-prim))
-
 ;Construidos automáticamente:
 
 (sllgen:make-define-datatypes scanner-spec-simple-interpreter grammar-simple-interpreter)
@@ -171,14 +205,6 @@
       (a-program (body)
                  (eval-expression body (init-env))))))
 
-; Ambiente inicial
-;(define init-env
-;  (lambda ()
-;    (extend-env
-;     '(x y z)
-;     '(4 2 5)
-;     (empty-env))))
-
 (define init-env
   (lambda ()
     (extend-env
@@ -216,43 +242,121 @@
   (lambda (exp env)
     (cases expression exp
       (lit-exp (datum) datum)
-      (var-exp (id) (apply-env env id))
-      (primapp-exp (prim rands)
-                   (let ((args (eval-primapp-exp-rands rands env)))
-                     (apply-primitive prim args)))
+      (id-exp (id tail)
+        (cases id-tail tail
+          (id-call-tail (arg args)
+                        (let ((all-args (cons arg args)))
+                          (let ((proc (apply-env env id))
+                                (arg-vals
+                                 (map (lambda (x)
+                                        (direct-target (eval-expression x env)))
+                                      all-args)))
+                            (if (procval? proc)
+                                (apply-procedure proc arg-vals)
+                                (eopl:error 'eval-expression
+                                            "~s no es una funcion"
+                                            id)))))
+
+          (id-assign-tail (rhs)
+                          (begin
+                            (setref!
+                             (apply-env-ref env id)
+                             (eval-expression rhs env))
+                            (eval-expression rhs env)))
+          (id-var-tail ()
+                       (apply-env env id))))
+      (string-exp (s)
+            (substring s 1 (- (string-length s) 1)))
+      (true-exp () #t)
+      (false-exp () #f)
+      (null-exp () '())
+      (primitive-exp (left op right)
+               (let ((l (eval-expression left env))
+                     (r (eval-expression right env)))
+                 (cases primitive op
+                   (add-op ()
+                           (cond
+                             ((and (number? l) (number? r))
+                              (+ l r))
+                             ((and (string? l) (string? r))
+                              (string-append l r))
+                             (else
+                              (eopl:error 'add-op
+                                          "Tipos incompatibles: ~s y ~s"
+                                          l r))))
+                   (sub-op () (- l r))
+                   (mul-op () (* l r))
+                   (div-op () (/ l r))
+                   (mod-op () (modulo l r))
+                   (eq-op () (equal? l r))
+                   (neq-op () (not (equal? l r)))
+                   (lt-op () (< l r))
+                   (gt-op () (> l r))
+                   (lte-op () (<= l r))
+                   (gte-op () (>= l r))
+                   (and-op () (and (true-value? l) (true-value? r)))
+                   (or-op () (or (true-value? l) (true-value? r))))))
+      (add1-exp (exp)
+          (+ (eval-expression exp env) 1))
+
+      (sub1-exp (exp)
+          (- (eval-expression exp env) 1))
       (if-exp (test-exp true-exp false-exp)
               (if (true-value? (eval-expression test-exp env))
                   (eval-expression true-exp env)
                   (eval-expression false-exp env)))
-      (let-exp (ids rands body)
-               (let ((args (eval-let-exp-rands rands env)))
-                 (eval-expression body (extend-env ids args env))))
-      (proc-exp (ids body)
-                (closure ids body env))
-      (app-exp (rator rands)
-               (let ((proc (eval-expression rator env))
-                     (args (eval-rands rands env)))
-                 (if (procval? proc)
-                     (apply-procedure proc args)
-                     (eopl:error 'eval-expression
-                                 "Attempt to apply non-procedure ~s" proc))))
-      (letrec-exp (proc-names idss bodies letrec-body)
-                  (eval-expression letrec-body
-                                   (extend-env-recursively proc-names idss bodies env)))
-      (set-exp (id rhs-exp)
-               (begin
-                 (setref!
-                  (apply-env-ref env id)
-                  (eval-expression rhs-exp env))
-                 1))
       (begin-exp (exp exps)
-                 (let loop ((acc (eval-expression exp env))
-                             (exps exps))
-                    (if (null? exps) 
-                        acc
-                        (loop (eval-expression (car exps) 
-                                               env)
-                              (cdr exps))))))))
+           (let loop ((acc (eval-expression exp env))
+                      (exps exps)
+                      (env env))
+             (if (null? exps)
+                 acc
+                 (let ((new-env (if (environment? acc) acc env)))
+                   (loop (eval-expression (car exps) new-env)
+                         (cdr exps)
+                         new-env)))))
+      (var-decl-exp (id rhs)
+              (let ((val (eval-expression rhs env)))
+                (extend-env (list id)
+                            (list (direct-target val))
+                            env)))
+
+      (const-decl-exp (id rhs)
+                (let ((val (eval-expression rhs env)))
+                  (extend-env (list id)
+                              (list (direct-target val))
+                              env)))
+
+      (while-exp (test-exp body-exp)
+           (let loop ()
+             (if (true-value? (eval-expression test-exp env))
+                 (begin
+                   (eval-expression body-exp env)
+                   (loop))
+                 'done)))
+
+      (for-exp (id list-exp body-exp)
+         (let ((lst (eval-expression list-exp env)))
+           (for-each
+            (lambda (val)
+              (eval-expression body-exp
+                               (extend-env (list id)
+                                           (list (direct-target val))
+                                           env)))
+            lst)))
+
+      (func-def-exp (name param params body-exps return-exps)
+                    (let ((all-params (cons param params)))
+                      (extend-env-recursively-ext
+                       name
+                       all-params
+                       body-exps
+                       return-exps
+                       env)))
+      (print-exp (exp)
+                 (eopl:printf "~a~%" (eval-expression exp env))
+                 '())
+      )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
 ; lista de operandos (expresiones)
@@ -263,18 +367,17 @@
 (define eval-rand
   (lambda (rand env)
     (cases expression rand
-      (var-exp (id)
-               (indirect-target
-                (let ((ref (apply-env-ref env id)))
-                  (cases target (primitive-deref ref)
-                    (direct-target (expval) ref)
-                    (indirect-target (ref1) ref1)))))
+      (id-exp (id tail)
+              (cases id-tail tail
+                (id-var-tail ()
+                             (indirect-target
+                              (let ((ref (apply-env-ref env id)))
+                                (cases target (primitive-deref ref)
+                                  (direct-target (v) ref)
+                                  (indirect-target (ref1) ref1)))))
+                (else (direct-target (eval-expression rand env)))))
       (else
        (direct-target (eval-expression rand env))))))
-
-(define eval-primapp-exp-rands
-  (lambda (rands env)
-    (map (lambda (x) (eval-expression x env)) rands)))
 
 (define eval-let-exp-rands
   (lambda (rands env)
@@ -285,20 +388,15 @@
   (lambda (rand env)
     (direct-target (eval-expression rand env))))
 
-;apply-primitive: <primitiva> <list-of-expression> -> numero
-(define apply-primitive
-  (lambda (prim args)
-    (cases primitive prim
-      (add-prim () (+ (car args) (cadr args)))
-      (substract-prim () (- (car args) (cadr args)))
-      (mult-prim () (* (car args) (cadr args)))
-      (incr-prim () (+ (car args) 1))
-      (decr-prim () (- (car args) 1)))))
-
 ;true-value?: determina si un valor dado corresponde a un valor booleano falso o verdadero
 (define true-value?
   (lambda (x)
-    (not (zero? x))))
+    (cond
+      ((equal? x #f) #f)
+      ((equal? x 0) #f)
+      ((equal? x "") #f)
+      ((equal? x '()) #f)
+      (else #t))))
 
 ;*******************************************************************************************
 ;Procedimientos
@@ -306,6 +404,12 @@
   (closure
    (ids (list-of symbol?))
    (body expression?)
+   (env environment?))
+  (closure-ext
+   (name symbol?)
+   (ids (list-of symbol?))
+   (body-exps (list-of expression?))
+   (return-exps (list-of expression?))
    (env environment?)))
 
 ;apply-procedure: evalua el cuerpo de un procedimientos en el ambiente extendido correspondiente
@@ -313,8 +417,13 @@
   (lambda (proc args)
     (cases procval proc
       (closure (ids body env)
-               (eval-expression body (extend-env ids args env))))))
-
+               (eval-expression body (extend-env ids args env)))
+      (closure-ext (name ids body-exps return-exps env)
+                   (let ((new-env (extend-env ids args env)))
+                     (for-each (lambda (e) (eval-expression e new-env)) body-exps)
+                     (if (null? return-exps)
+                         '()
+                         (eval-expression (car return-exps) new-env)))))))
 ;*******************************************************************************************
 ;Ambientes
 
@@ -343,16 +452,29 @@
 
 ;extend-env-recursively: <list-of symbols> <list-of <list-of symbols>> <list-of expressions> environment -> environment
 ;función que crea un ambiente extendido para procedimientos recursivos
-(define extend-env-recursively
-  (lambda (proc-names idss bodies old-env)
-    (let ((len (length proc-names)))
-      (let ((vec (make-vector len)))
-        (let ((env (extended-env-record proc-names vec old-env)))
-          (for-each
-            (lambda (pos ids body)
-              (vector-set! vec pos (direct-target (closure ids body env))))
-            (iota len) idss bodies)
-          env)))))
+(define extend-env-recursively-ext
+  (lambda (name ids body-exps return-exps old-env)
+
+    (let ((vec (make-vector 1)))
+
+      (let ((env
+             (extended-env-record
+              (list name)
+              vec
+              old-env)))
+
+        (vector-set!
+         vec
+         0
+         (direct-target
+          (closure-ext
+           name
+           ids
+           body-exps
+           return-exps
+           env)))
+
+        env))))
 
 ;iota: number -> list
 ;función que retorna una lista de los números desde 0 hasta end
@@ -386,7 +508,11 @@
 
 (define expval?
   (lambda (x)
-    (or (number? x) (procval? x))))
+    (or (number? x)
+        (string? x)
+        (boolean? x)
+        (null? x)
+        (procval? x))))
 
 (define ref-to-direct-target?
   (lambda (x)
@@ -453,41 +579,5 @@
                 #f))))))
 
 ;******************************************************************************************
-;Pruebas
-
-(show-the-datatypes)
-just-scan
-scan&parse
-(just-scan "add1(x)")
-(just-scan "add1(   x   )%cccc")
-(just-scan "add1(  +(5, x)   )%cccc")
-(just-scan "add1(  +(5, %ccccc x) ")
-(scan&parse "add1(x)")
-(scan&parse "add1(   x   )%cccc")
-(scan&parse "add1(  +(5, x)   )%cccc")
-(scan&parse "add1(  +(5, %cccc
-x)) ")
-(scan&parse "if -(x,4) then +(y,11) else *(y,10)")
-(scan&parse "let
-x = -(y,1)
-in
-let
-x = +(x,2)
-in
-add1(x)")
-
-(define caso1 (primapp-exp (incr-prim) (list (lit-exp 5))))
-(define exp-numero (lit-exp 8))
-(define exp-ident (var-exp 'c))
-(define exp-app (primapp-exp (add-prim) (list exp-numero exp-ident)))
-(define programa (a-program exp-app))
-(define una-expresion-dificil (primapp-exp (mult-prim)
-                                           (list (primapp-exp (incr-prim)
-                                                              (list (var-exp 'v)
-                                                                    (var-exp 'y)))
-                                                 (var-exp 'x)
-                                                 (lit-exp 200))))
-(define un-programa-dificil
-    (a-program una-expresion-dificil))
 
 (interpretador)
