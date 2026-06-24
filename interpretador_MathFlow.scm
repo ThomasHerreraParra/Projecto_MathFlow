@@ -113,13 +113,13 @@
                 begin-exp)
 
     (expression
-     ("var" identifier "=" expression)
+     ("var" identifier "=" expression (arbno "," identifier "=" expression) "endvar")
      var-decl-exp)
 
     (expression
-     ("const" identifier "=" expression)
+     ("const" identifier "=" expression (arbno "," identifier "=" expression) "endconst")
      const-decl-exp)
-
+    
     (expression
      ("while" expression "do" expression "done")
      while-exp)
@@ -139,8 +139,13 @@
      ("print" "(" expression ")")
      print-exp)
 
-    ;;;;;;
+    (expression
+     ("switch" expression "{"
+               (arbno "case" expression ":" expression)
+               "default" ":" expression "}")
+     switch-exp)
 
+;;  --------------------------------------------------------------------    
     (expression ("(" expression primitive expression ")") primitive-exp)
 
     (primitive  ("+") add-op)
@@ -315,17 +320,29 @@
                    (loop (eval-expression (car exps) new-env)
                          (cdr exps)
                          new-env)))))
-      (var-decl-exp (id rhs)
-              (let ((val (eval-expression rhs env)))
-                (extend-env (list id)
-                            (list (direct-target val))
-                            env)))
+      (var-decl-exp (id rhs ids rhss)
+              (let loop ((ids (cons id ids))
+                         (rhss (cons rhs rhss))
+                         (env env))
+                (if (null? ids)
+                    env
+                    (loop (cdr ids)
+                          (cdr rhss)
+                          (extend-env (list (car ids))
+                                      (list (direct-target (eval-expression (car rhss) env)))
+                                      env)))))
 
-      (const-decl-exp (id rhs)
-                (let ((val (eval-expression rhs env)))
-                  (extend-env (list id)
-                              (list (direct-target val))
-                              env)))
+      (const-decl-exp (id rhs ids rhss)
+                (let loop ((ids (cons id ids))
+                           (rhss (cons rhs rhss))
+                           (env env))
+                  (if (null? ids)
+                      env
+                      (loop (cdr ids)
+                            (cdr rhss)
+                            (extend-env (list (car ids))
+                                        (list (direct-target (eval-expression (car rhss) env)))
+                                        env)))))
 
       (while-exp (test-exp body-exp)
            (let loop ()
@@ -356,6 +373,16 @@
       (print-exp (exp)
                  (eopl:printf "~a~%" (eval-expression exp env))
                  '())
+
+      (switch-exp (test-exp cases-exps cases-bodies default-exp)
+            (let ((val (eval-expression test-exp env)))
+              (let loop ((cases cases-exps)
+                         (bodies cases-bodies))
+                (if (null? cases)
+                    (eval-expression default-exp env)
+                    (if (equal? val (eval-expression (car cases) env))
+                        (eval-expression (car bodies) env)
+                        (loop (cdr cases) (cdr bodies)))))))
       )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
