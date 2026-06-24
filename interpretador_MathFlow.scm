@@ -56,6 +56,12 @@
 ;;              ::= print(<expression>)
 ;;                  <print-exp(exp)>
 ;;
+;;              ::= switch <expression> {
+;;                     {case <expression> : <expression>}*
+;;                     default : <expression>
+;;                  }
+;;                  <switch-exp(test-exp cases-exps cases-bodies default-exp)>
+;;
 ;;              ::= (<expression> <primitive> <expression>)
 ;;                  <primitive-exp(left op right)>
 ;;
