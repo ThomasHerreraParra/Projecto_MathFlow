@@ -241,6 +241,7 @@
 
 (define-datatype target target?
   (direct-target (expval expval?))
+  (const-target (expval expval?)) ;;Variables Constantes
   (indirect-target (ref ref-to-direct-target?)))
 
 (define-datatype reference reference?
@@ -347,7 +348,7 @@
                       (loop (cdr ids)
                             (cdr rhss)
                             (extend-env (list (car ids))
-                                        (list (direct-target (eval-expression (car rhss) env)))
+                                        (list (const-target (eval-expression (car rhss) env)))
                                         env)))))
 
       (while-exp (test-exp body-exp)
@@ -378,7 +379,7 @@
                        env)))
       (print-exp (exp)
                  (eopl:printf "~a~%" (eval-expression exp env))
-                 '())
+                 '---Fin-Operacion---) ;;Sustituye el imprimir un espacio en blanco
 
       (switch-exp (test-exp cases-exps cases-bodies default-exp)
             (let ((val (eval-expression test-exp env)))
@@ -407,6 +408,7 @@
                               (let ((ref (apply-env-ref env id)))
                                 (cases target (primitive-deref ref)
                                   (direct-target (v) ref)
+                                  (const-target (v) ref) ;;Constantes
                                   (indirect-target (ref1) ref1)))))
                 (else (direct-target (eval-expression rand env)))))
       (else
@@ -554,15 +556,18 @@
            (a-ref (pos vec)
                   (cases target (vector-ref vec pos)
                     (direct-target (v) #t)
+                    (const-target (v) #t)
                     (indirect-target (v) #f)))))))
 
 (define deref
   (lambda (ref)
     (cases target (primitive-deref ref)
       (direct-target (expval) expval)
+      (const-target (expval) expval)
       (indirect-target (ref1)
                        (cases target (primitive-deref ref1)
                          (direct-target (expval) expval)
+                         (const-target (expval) expval) ;;Constantes
                          (indirect-target (p)
                                           (eopl:error 'deref
                                                       "Illegal reference: ~s" ref1)))))))
@@ -577,9 +582,13 @@
   (lambda (ref expval)
     (let
         ((ref (cases target (primitive-deref ref)
-                (direct-target (expval1) ref)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                (direct-target  (expval1) ref)
+                (const-target   (expval1)          ;; Constantes
+                  (eopl:error 'setref!
+                    "No se puede modificar una constante"))
                 (indirect-target (ref1) ref1))))
       (primitive-setref! ref (direct-target expval)))))
+
 
 (define primitive-setref!
   (lambda (ref val)
