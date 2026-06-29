@@ -515,13 +515,18 @@
 
       (for-exp (id list-exp body-exp)
          (let ((lst (eval-expression list-exp env)))
-           (for-each
-            (lambda (val)
-              (eval-expression body-exp
-                               (extend-env (list id)
-                                           (list (direct-target val))
-                                           env)))
-            lst)))
+           (if (not (listval? lst))
+               (eopl:error 'for-exp
+                           "Se esperaba una lista para iterar, se recibio: ~s" lst)
+               (let loop ((l lst))
+                 (cases listval l
+                   (empty-list () 'done)
+                   (cons-cell (h t)
+                              (eval-expression body-exp
+                                               (extend-env (list id)
+                                                           (list (direct-target h))
+                                                           env))
+                              (loop t)))))))
 
       (func-def-exp (name param params body-exps return-exps)
                     (let ((all-params (cons param params)))
@@ -638,15 +643,13 @@
               (if (not (listval? lst2))
                   (eopl:error 'append-exp
                               "El segundo argumento debe ser una lista, se recibio: ~s" lst2)
-                  ;; append-aux: listval listval -> listval
-                  ;; recorre lst1 hasta el final y lo enlaza con lst2
-                  (letrec ((append-aux
-                            (lambda (l)
-                              (cases listval l
-                                (empty-list () lst2)
-                                (cons-cell (h t)
-                                           (cons-cell h (append-aux t)))))))
-                    (append-aux lst1))))))
+                  ;; append-aux: recorre lst1 hasta el final y lo enlaza con lst2
+                  (let loop ((l lst1))
+                    (cases listval l
+                      (empty-list () lst2)
+                      (cons-cell (h t)
+                                 (cons-cell h (loop t)))))))))
+      
 
       ;; ref-list(lst, i) → elemento en la posición i (índices desde 0)
       ;; Devuelve nulo si i < 0 o i >= longitud de la lista
@@ -659,19 +662,17 @@
               (if (not (number? i))
                   (eopl:error 'ref-list-exp
                               "El indice debe ser un numero, se recibio: ~s" i)
-                  ;; ref-aux: listval number -> expval
                   ;; recorre la lista decrementando el índice hasta encontrar la posición
-                  (letrec ((ref-aux
-                            (lambda (l pos)
-                              (cases listval l
-                                (empty-list () '())       ; índice fuera de rango → nulo
-                                (cons-cell (h t)
-                                           (if (= pos 0)
-                                               h
-                                               (ref-aux t (- pos 1))))))))
-                    (ref-aux lst i))))))
+                  (let loop ((l lst) (pos i))
+                    (cases listval l
+                      (empty-list () '())          ; índice fuera de rango → nulo
+                      (cons-cell (h t)
+                                 (if (= pos 0)
+                                     h
+                                     (loop t (- pos 1))))))))))
 
-      ;; set-list(lst, i, valor) → nueva lista con la posición i reemplazada por valor
+      
+     ;; set-list(lst, i, valor) → nueva lista con la posición i reemplazada por valor
       ;; Devuelve la lista modificada sin mutar la original.
       ;; Si i está fuera de rango, devuelve la lista sin cambios.
       (set-list-exp (lst-exp i-exp val-exp)
@@ -684,19 +685,15 @@
               (if (not (number? i))
                   (eopl:error 'set-list-exp
                               "El indice debe ser un numero, se recibio: ~s" i)
-                  ;; set-aux: listval number -> listval
                   ;; recorre la lista reconstruyéndola; en la posición i pone val
-                  (letrec ((set-aux
-                            (lambda (l pos)
-                              (cases listval l
-                                (empty-list () (empty-list))  ; índice fuera de rango
-                                (cons-cell (h t)
-                                           (if (= pos 0)
-                                               (cons-cell val t)
-                                               (cons-cell h (set-aux t (- pos 1)))))))))
-                    (set-aux lst i))))))
-      
-      
+                  (let loop ((l lst) (pos i))
+                    (cases listval l
+                      (empty-list () (empty-list))   ; índice fuera de rango
+                      (cons-cell (h t)
+                                 (if (= pos 0)
+                                     (cons-cell val t)
+                                     (cons-cell h (loop t (- pos 1)))))))))))
+     
       )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
