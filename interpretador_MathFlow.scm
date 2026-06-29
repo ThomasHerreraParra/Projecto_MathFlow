@@ -82,7 +82,47 @@
 ;;                  <evaluar-exp(exp id rhs ids rhss)>
 ;;
 ;;
+;              ::= vacio
+;;                 <vacio-exp>
+;;                  Representa la lista vacía (equivalente a '() en Racket).
 ;;
+;;              ::= vacio?(<expression>)
+;;                  <vacio?-exp(exp)>
+;;                  Devuelve true si la lista está vacía, false en caso contrario.
+;;
+;;              ::= crear-lista(<expression>, <expression>)
+;;                  <crear-lista-exp(elem lst)>
+;;                  Crea una nueva lista añadiendo elem al inicio de lst.
+;;                  Equivale a cons en Racket.
+;;
+;;              ::= lista?(<expression>)
+;;                  <lista?-exp(exp)>
+;;                  Devuelve true si el valor x es una lista válida (incluyendo vacio).
+;;
+;;              ::= cabeza(<expression>)
+;;                  <cabeza-exp(lst)>
+;;                  Devuelve el primer elemento de la lista.
+;;                  Si está vacía, devuelve nulo o genera un error.
+;;
+;;              ::= cola(<expression>)
+;;                  <cola-exp(lst)>
+;;                  Devuelve una nueva lista con todos los elementos excepto el primero.
+;;                  Si hay un solo elemento, devuelve vacio.
+;;
+;;              ::= append(<expression>, <expression>)
+;;                  <append-exp(lst1 lst2)>
+;;                  Concatena las listas lst1 y lst2, devolviendo una nueva lista.
+;;                  Equivale a append en Racket. No modifica las listas originales.
+;;
+;;              ::= ref-list(<expression>, <expression>)
+;;                  <ref-list-exp(lst i)>
+;;                  Devuelve el elemento en la posición i (índices desde 0).
+;;                  Si el índice es inválido, devuelve nulo.
+;;
+;;              ::= set-list(<expression>, <expression>, <expression>)
+;;                  <set-list-exp(lst i valor)>
+;;                  Reemplaza el elemento en la posición i por valor.
+;;                  Devuelve la lista modificada (nueva lista, no mutación).
 ;;
 ;;
 ;; <primitive> ::= + | - | * | / | % | == | <> | < | > | <= | >= | and | or | not
@@ -181,7 +221,39 @@
                 identifier "=" expression
                 (arbno "," identifier "=" expression) ")")
      evaluar-exp)
-  
+
+
+    ;; Sección 4 – Listas: producciones de la gramática
+    ;; ------------------------------------------------------------------
+
+    ;; vacio: representa la lista vacía (constante terminal)
+    (expression ("vacio") vacio-exp)
+
+    ;; vacio?(lst): devuelve true si lst es la lista vacía
+    (expression ("vacio?" "(" expression ")") vacio?-exp)
+
+    ;; crear-lista(elem, lst): inserta elem al inicio de lst (equivale a cons)
+    (expression ("crear-lista" "(" expression "," expression ")") crear-lista-exp)
+
+    ;; lista?(x): devuelve true si x es una lista válida (listval o vacio)
+    (expression ("lista?" "(" expression ")") lista?-exp)
+
+    ;; cabeza(lst): retorna el primer elemento de la lista
+    (expression ("cabeza" "(" expression ")") cabeza-exp)
+
+    ;; cola(lst): retorna la lista sin su primer elemento
+    (expression ("cola" "(" expression ")") cola-exp)
+
+    ;; append(lst1, lst2): concatena lst1 y lst2 en una nueva lista
+    (expression ("append" "(" expression "," expression ")") append-exp)
+
+    ;; ref-list(lst, i): devuelve el elemento en la posición i (desde 0)
+    ;;                   devuelve nulo si el índice es inválido
+    (expression ("ref-list" "(" expression "," expression ")") ref-list-exp)
+
+    ;; set-list(lst, i, valor): devuelve una nueva lista con la posición i
+    ;;                          reemplazada por valor
+    (expression ("set-list" "(" expression "," expression "," expression ")") set-list-exp)
     
 
 ;;  --------------------------------------------------------------------    
@@ -292,6 +364,23 @@
    (op symbol?)          ; uno de: + - * /
    (left scheme-value?)
    (right scheme-value?)))
+
+;**************************************************************************************
+
+;Definición del tipo de dato para Listas (Sección 4)
+;
+; Una lista MathFlow es un valor de tipo listval con dos variantes:
+;   - empty-list : la lista vacía (equivale a '() / vacio)
+;   - cons-cell  : una celda con un elemento (head) y el resto (tail),
+;                  donde tail debe ser también un listval.
+;                  Equivale al cons de Racket.
+
+(define-datatype listval listval?
+  (empty-list)                              ; vacio
+  (cons-cell                               ; crear-lista(elem, lst)
+   (head scheme-value?)
+   (tail listval?)))
+
 
 ;**************************************************************************************
 
@@ -480,6 +569,133 @@
                           (val       (eval-expression exp env)))
                      (evaluar-sym val all-ids sust-vals)))
 
+
+      ;; Sección 4 – Evaluación de Listas
+      ;; ----------------------------------------------------------------
+
+      ;; vacio → devuelve la lista vacía (empty-list)
+      (vacio-exp ()
+        (empty-list))
+
+      ;; vacio?(lst) → true si lst es empty-list, false si es cons-cell
+      (vacio?-exp (lst-exp)
+        (let ((lst (eval-expression lst-exp env)))
+          (if (listval? lst)
+              (cases listval lst
+                (empty-list () #t)
+                (cons-cell (h t) #f))
+              (eopl:error 'vacio?-exp
+                          "Se esperaba una lista, se recibio: ~s" lst))))
+
+      ;; crear-lista(elem, lst) → cons-cell con elem como cabeza y lst como cola
+      ;; Si lst no es un listval (por ejemplo vacio), genera error descriptivo
+      (crear-lista-exp (elem-exp lst-exp)
+        (let ((elem (eval-expression elem-exp env))
+              (lst  (eval-expression lst-exp env)))
+          (if (listval? lst)
+              (cons-cell elem lst)
+              (eopl:error 'crear-lista-exp
+                          "El segundo argumento debe ser una lista, se recibio: ~s" lst))))
+
+      ;; lista?(x) → true si x es cualquier listval (empty-list o cons-cell)
+      (lista?-exp (exp)
+        (listval? (eval-expression exp env)))
+
+      ;; cabeza(lst) → primer elemento de la lista
+      ;; Error si la lista está vacía
+      (cabeza-exp (lst-exp)
+        (let ((lst (eval-expression lst-exp env)))
+          (if (listval? lst)
+              (cases listval lst
+                (empty-list ()
+                  (eopl:error 'cabeza-exp "No se puede obtener la cabeza de una lista vacia"))
+                (cons-cell (h t) h))
+              (eopl:error 'cabeza-exp
+                          "Se esperaba una lista, se recibio: ~s" lst))))
+
+      ;; cola(lst) → lista sin el primer elemento
+      ;; Si hay un solo elemento, devuelve empty-list (vacio)
+      (cola-exp (lst-exp)
+        (let ((lst (eval-expression lst-exp env)))
+          (if (listval? lst)
+              (cases listval lst
+                (empty-list ()
+                  (eopl:error 'cola-exp "No se puede obtener la cola de una lista vacia"))
+                (cons-cell (h t) t))
+              (eopl:error 'cola-exp
+                          "Se esperaba una lista, se recibio: ~s" lst))))
+
+
+      ;; append(lst1, lst2) → concatena lst1 y lst2 en una nueva lista
+      ;; Recorre lst1 recursivamente y al llegar al final enlaza con lst2.
+      ;; No modifica ninguna de las dos listas originales.
+      (append-exp (lst1-exp lst2-exp)
+        (let ((lst1 (eval-expression lst1-exp env))
+              (lst2 (eval-expression lst2-exp env)))
+          (if (not (listval? lst1))
+              (eopl:error 'append-exp
+                          "El primer argumento debe ser una lista, se recibio: ~s" lst1)
+              (if (not (listval? lst2))
+                  (eopl:error 'append-exp
+                              "El segundo argumento debe ser una lista, se recibio: ~s" lst2)
+                  ;; append-aux: listval listval -> listval
+                  ;; recorre lst1 hasta el final y lo enlaza con lst2
+                  (letrec ((append-aux
+                            (lambda (l)
+                              (cases listval l
+                                (empty-list () lst2)
+                                (cons-cell (h t)
+                                           (cons-cell h (append-aux t)))))))
+                    (append-aux lst1))))))
+
+      ;; ref-list(lst, i) → elemento en la posición i (índices desde 0)
+      ;; Devuelve nulo si i < 0 o i >= longitud de la lista
+      (ref-list-exp (lst-exp i-exp)
+        (let ((lst (eval-expression lst-exp env))
+              (i   (eval-expression i-exp env)))
+          (if (not (listval? lst))
+              (eopl:error 'ref-list-exp
+                          "El primer argumento debe ser una lista, se recibio: ~s" lst)
+              (if (not (number? i))
+                  (eopl:error 'ref-list-exp
+                              "El indice debe ser un numero, se recibio: ~s" i)
+                  ;; ref-aux: listval number -> expval
+                  ;; recorre la lista decrementando el índice hasta encontrar la posición
+                  (letrec ((ref-aux
+                            (lambda (l pos)
+                              (cases listval l
+                                (empty-list () '())       ; índice fuera de rango → nulo
+                                (cons-cell (h t)
+                                           (if (= pos 0)
+                                               h
+                                               (ref-aux t (- pos 1))))))))
+                    (ref-aux lst i))))))
+
+      ;; set-list(lst, i, valor) → nueva lista con la posición i reemplazada por valor
+      ;; Devuelve la lista modificada sin mutar la original.
+      ;; Si i está fuera de rango, devuelve la lista sin cambios.
+      (set-list-exp (lst-exp i-exp val-exp)
+        (let ((lst (eval-expression lst-exp env))
+              (i   (eval-expression i-exp env))
+              (val (eval-expression val-exp env)))
+          (if (not (listval? lst))
+              (eopl:error 'set-list-exp
+                          "El primer argumento debe ser una lista, se recibio: ~s" lst)
+              (if (not (number? i))
+                  (eopl:error 'set-list-exp
+                              "El indice debe ser un numero, se recibio: ~s" i)
+                  ;; set-aux: listval number -> listval
+                  ;; recorre la lista reconstruyéndola; en la posición i pone val
+                  (letrec ((set-aux
+                            (lambda (l pos)
+                              (cases listval l
+                                (empty-list () (empty-list))  ; índice fuera de rango
+                                (cons-cell (h t)
+                                           (if (= pos 0)
+                                               (cons-cell val t)
+                                               (cons-cell h (set-aux t (- pos 1)))))))))
+                    (set-aux lst i))))))
+      
       
       )))
 
@@ -752,8 +968,11 @@
         (boolean? x)
         (null? x)
         (procval? x)
-        (symval? x)
+        (symval? x) ;;Simbolos
+        (listval? x) ;;Listas
         )))
+
+
 
 (define ref-to-direct-target?
   (lambda (x)
@@ -862,15 +1081,6 @@
       (div-op () '/)
       (else (eopl:error 'prim->sym "Operador no aritmetico")))))
 
-;print-val: expval -> void
-;imprime cualquier valor expresado, incluyendo simbólicos
-(define print-val
-  (lambda (val)
-    (cond
-      ((symval? val)  (print-symval val))
-      ((boolean? val) (display (if val "true" "false")))
-      ((null? val)    (display "null"))
-      (else           (display val)))))
 
 ;print-symval: symval -> void
 ;imprime una expresión simbólica de forma legible
@@ -887,6 +1097,35 @@
               (display " ")
               (print-val right)
               (display ")")))))
+
+
+
+
+;print-listval: listval -> void
+;imprime una lista MathFlow en formato [e1, e2, ..., eN]
+;La lista vacía se imprime como []
+(define print-listval
+  (lambda (lst)
+    (display "[")
+    (let loop ((lst lst) (first #t))
+      (cases listval lst
+        (empty-list () '())
+        (cons-cell (h t)
+                   (if (not first) (display ", ") '())
+                   (print-val h)
+                   (loop t #f))))
+    (display "]")))
+
+;print-val: expval -> void
+;imprime cualquier valor expresado, incluyendo simbólicos
+(define print-val
+  (lambda (val)
+    (cond
+      ((listval? val) (print-listval val))   ;; Sección 4: primero listas (antes del else)
+      ((symval? val)  (print-symval val))
+      ((boolean? val) (display (if val "true" "false")))
+      ((null? val)    (display "null"))
+      (else           (display val)))))
 
 ;******************************************************************************************
 
