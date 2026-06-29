@@ -124,6 +124,17 @@
 ;;                  Reemplaza el elemento en la posición i por valor.
 ;;                  Devuelve la lista modificada (nueva lista, no mutación).
 ;;
+;;              ::= [ {<expression>}*(,) ]
+;;                  <list-lit-exp(exps)>
+;;                  Crea una lista a partir de una secuencia de expresiones separadas por comas.
+;;                  Equivale a crear-lista anidados terminados en vacio.
+;;                  Ejemplo: [1, 2, 3]  =>  crear-lista(1, crear-lista(2, crear-lista(3, vacio)))
+;;
+;;              ::= longitud(<expression>)
+;;                  <longitud-exp(exp)>
+;;                  Devuelve la cantidad de caracteres de una cadena
+;;                  o la cantidad de elementos de una lista.
+;;
 ;;
 ;; <primitive> ::= + | - | * | / | % | == | <> | < | > | <= | >= | and | or | not
 
@@ -254,6 +265,16 @@
     ;; set-list(lst, i, valor): devuelve una nueva lista con la posición i
     ;;                          reemplazada por valor
     (expression ("set-list" "(" expression "," expression "," expression ")") set-list-exp)
+
+
+    ;; [e1, e2, ..., eN]: sintaxis literal de lista
+    ;; Construye una listval equivalente a crear-lista anidados terminados en vacio.
+    ;; Una lista vacía se escribe [].  Nota: se usa arbno con "," para 0 o más elementos.
+    (expression ("[" (separated-list expression ",") "]") list-lit-exp)
+
+    ;; longitud(exp): longitud de una cadena (número de caracteres)
+    ;;                o de una lista (número de elementos)
+    (expression ("longitud" "(" expression ")") longitud-exp)
     
 
 ;;  --------------------------------------------------------------------    
@@ -693,7 +714,31 @@
                                  (if (= pos 0)
                                      (cons-cell val t)
                                      (cons-cell h (loop t (- pos 1)))))))))))
-     
+
+      ; [e1, e2, ..., eN] → listval equivalente a crear-lista anidados
+      ;; Evalúa cada expresión de izquierda a derecha y construye la lista
+      ;; en orden, terminando en empty-list.  Una lista vacía [] devuelve empty-list.
+      (list-lit-exp (exps)
+        (let loop ((elems (map (lambda (e) (eval-expression e env)) exps)))
+          (if (null? elems)
+              (empty-list)
+              (cons-cell (car elems) (loop (cdr elems))))))
+
+      ;; longitud(exp) → número de caracteres si exp es string,
+      ;;                  número de elementos si exp es listval
+      (longitud-exp (exp)
+        (let ((val (eval-expression exp env)))
+          (cond
+            ((string? val)  (string-length val))
+            ((listval? val)
+             (let loop ((l val) (n 0))
+               (cases listval l
+                 (empty-list  ()    n)
+                 (cons-cell   (h t) (loop t (+ n 1))))))
+            (else
+             (eopl:error 'longitud-exp
+                         "longitud espera una cadena o lista, se recibio: ~s" val)))))
+      
       )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
