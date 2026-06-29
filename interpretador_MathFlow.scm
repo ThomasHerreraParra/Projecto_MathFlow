@@ -71,7 +71,21 @@
 ;;              ::= sub1(<expression>)
 ;;                  <sub1-exp(exp)>
 ;;
-;; <primitive> ::= + | - | * | / | % | == | <> | < | > | <= | >= | and | or
+;;              ::= symbol <identifier>
+;;                  <sym-decl-exp(id)>
+;;
+;;              ::= simplificar(<expression>)
+;;                  <simplificar-exp(exp)>
+;;
+;;              ::= evaluar(<expression>, <identifier> = <expression>
+;;                          {, <identifier> = <expression>}*)
+;;                  <evaluar-exp(exp id rhs ids rhss)>
+;;
+;;
+;;
+;;
+;;
+;; <primitive> ::= + | - | * | / | % | == | <> | < | > | <= | >= | and | or | not
 
 ;******************************************************************************************
 
@@ -82,7 +96,7 @@
 '((white-sp
    (whitespace) skip)
   (comment
-   ("%" (arbno (not #\newline))) skip)
+   ("#" (arbno (not #\newline))) skip)
   (identifier
    (letter (arbno (or letter digit "?"))) symbol)
   (number
@@ -101,6 +115,10 @@
 (define grammar-simple-interpreter
   '((program (expression) a-program)
     (expression (number) lit-exp)
+
+    (expression
+     ("print" "(" expression ")")
+     print-exp)
     
     (expression (identifier id-tail) id-exp)
     (id-tail ("(" expression (arbno "," expression) ")") id-call-tail)
@@ -142,14 +160,29 @@
      func-def-exp)
 
     (expression
-     ("print" "(" expression ")")
-     print-exp)
-
-    (expression
      ("switch" expression "{"
                (arbno "case" expression ":" expression)
                "default" ":" expression "}")
      switch-exp)
+
+    
+    ;;Simbolos 2.3
+
+    (expression
+     ("symbol" identifier)
+     sym-decl-exp)
+
+    (expression
+     ("simplificar" "(" expression ")")
+     simplificar-exp)
+
+    (expression
+     ("evaluar" "(" expression ","
+                identifier "=" expression
+                (arbno "," identifier "=" expression) ")")
+     evaluar-exp)
+  
+    
 
 ;;  --------------------------------------------------------------------    
     (expression ("(" expression primitive expression ")") primitive-exp)
@@ -170,7 +203,8 @@
 
     (expression ("add1" "(" expression ")") add1-exp)
     (expression ("sub1" "(" expression ")") sub1-exp)
-
+    (expression ("not" "(" expression ")" ) not-exp)
+    
     ))
 
 
@@ -249,6 +283,17 @@
          (vec vector?)))
 
 ;**************************************************************************************
+;Definicion de expresiones simbolicas
+
+(define-datatype symval symval?
+  (sym-atom
+   (name symbol?))
+  (sym-op
+   (op symbol?)          ; uno de: + - * /
+   (left scheme-value?)
+   (right scheme-value?)))
+
+;**************************************************************************************
 
 (define eval-expression
   (lambda (exp env)
@@ -285,34 +330,40 @@
       (primitive-exp (left op right)
                (let ((l (eval-expression left env))
                      (r (eval-expression right env)))
-                 (cases primitive op
-                   (add-op ()
-                           (cond
-                             ((and (number? l) (number? r))
-                              (+ l r))
-                             ((and (string? l) (string? r))
-                              (string-append l r))
-                             (else
-                              (eopl:error 'add-op
-                                          "Tipos incompatibles: ~s y ~s"
-                                          l r))))
-                   (sub-op () (- l r))
-                   (mul-op () (* l r))
-                   (div-op () (/ l r))
-                   (mod-op () (modulo l r))
-                   (eq-op () (equal? l r))
-                   (neq-op () (not (equal? l r)))
-                   (lt-op () (< l r))
-                   (gt-op () (> l r))
-                   (lte-op () (<= l r))
-                   (gte-op () (>= l r))
-                   (and-op () (and (true-value? l) (true-value? r)))
-                   (or-op () (or (true-value? l) (true-value? r))))))
+                 (if (or (symval? l) (symval? r))
+                     ; Al menos un operando es simbólico
+                     (if (prim-aritmetica? op)
+                         (sym-op (prim->sym op) l r)
+                         (eopl:error 'primitive-exp
+                                     "Operador no aritmetico sobre expresion simbolica: ~s" op))
+                     ; Ambos son valores concretos: evaluación normal
+                     (cases primitive op
+                       (add-op ()
+                               (cond
+                                 ((and (number? l) (number? r)) (+ l r))
+                                 ((and (string? l) (string? r)) (string-append l r))
+                                 (else (eopl:error 'add-op "Tipos incompatibles: ~s y ~s" l r))))
+                       (sub-op () (- l r))
+                       (mul-op () (* l r))
+                       (div-op () (/ l r))
+                       (mod-op () (modulo l r))
+                       (eq-op  () (equal? l r))
+                       (neq-op () (not (equal? l r)))
+                       (lt-op  () (< l r))
+                       (gt-op  () (> l r))
+                       (lte-op () (<= l r))
+                       (gte-op () (>= l r))
+                       (and-op () (and (true-value? l) (true-value? r)))
+                       (or-op  () (or  (true-value? l) (true-value? r)))))))
       (add1-exp (exp)
           (+ (eval-expression exp env) 1))
 
       (sub1-exp (exp)
           (- (eval-expression exp env) 1))
+
+      (not-exp (exp)
+          (not (true-value? (eval-expression exp env))))
+      
       (if-exp (test-exp true-exp false-exp)
               (if (true-value? (eval-expression test-exp env))
                   (eval-expression true-exp env)
@@ -328,28 +379,42 @@
                          (cdr exps)
                          new-env)))))
       (var-decl-exp (id rhs ids rhss)
-              (let loop ((ids (cons id ids))
+              (let loop ((ids  (cons id ids))
                          (rhss (cons rhs rhss))
-                         (env env))
+                         (env  env))
                 (if (null? ids)
                     env
-                    (loop (cdr ids)
-                          (cdr rhss)
-                          (extend-env (list (car ids))
-                                      (list (direct-target (eval-expression (car rhss) env)))
-                                      env)))))
-
+                    (let ((cur-id (car ids)))
+                      ; Chequeo: no puede declararse var si ya existe como símbolo
+                      (if (and (env-bound? env cur-id)
+                               (symval? (apply-env env cur-id)))
+                          (eopl:error 'var-decl-exp
+                                      "~s ya existe como simbolo algebraico; no puede ser variable"
+                                      cur-id)
+                          (loop (cdr ids)
+                                (cdr rhss)
+                                (extend-env (list cur-id)
+                                            (list (direct-target
+                                                   (eval-expression (car rhss) env)))
+                                            env)))))))
       (const-decl-exp (id rhs ids rhss)
-                (let loop ((ids (cons id ids))
+                (let loop ((ids  (cons id ids))
                            (rhss (cons rhs rhss))
-                           (env env))
+                           (env  env))
                   (if (null? ids)
                       env
-                      (loop (cdr ids)
-                            (cdr rhss)
-                            (extend-env (list (car ids))
-                                        (list (const-target (eval-expression (car rhss) env)))
-                                        env)))))
+                      (let ((cur-id (car ids)))
+                        (if (and (env-bound? env cur-id)
+                                 (symval? (apply-env env cur-id)))
+                            (eopl:error 'const-decl-exp
+                                        "~s ya existe como simbolo algebraico; no puede ser constante"
+                                        cur-id)
+                            (loop (cdr ids)
+                                  (cdr rhss)
+                                  (extend-env (list cur-id)
+                                              (list (const-target
+                                                     (eval-expression (car rhss) env)))
+                                              env)))))))
 
       (while-exp (test-exp body-exp)
            (let loop ()
@@ -378,9 +443,10 @@
                        return-exps
                        env)))
       (print-exp (exp)
-                 (eopl:printf "~a~%" (eval-expression exp env))
-                 '---Fin-Operacion---) ;;Sustituye el imprimir un espacio en blanco
-
+           (let ((val (eval-expression exp env)))
+             (print-val val)
+             (newline)
+             '---Fin-Operacion---))
       (switch-exp (test-exp cases-exps cases-bodies default-exp)
             (let ((val (eval-expression test-exp env)))
               (let loop ((cases cases-exps)
@@ -390,6 +456,31 @@
                     (if (equal? val (eval-expression (car cases) env))
                         (eval-expression (car bodies) env)
                         (loop (cdr cases) (cdr bodies)))))))
+
+
+      ; symbol x → extiende el ambiente con x ligado a sym-atom(x)
+      ; Error si x ya existe (no puede ser variable y símbolo a la vez)
+      (sym-decl-exp (id)
+                    (if (env-bound? env id)
+                        (eopl:error 'sym-decl-exp
+                                    "~s ya existe en el ambiente; no puede ser simbolo" id)
+                        (extend-env (list id)
+                                    (list (direct-target (sym-atom id)))
+                                    env)))
+
+      ; simplificar(exp) → aplica reglas algebraicas recursivamente
+      (simplificar-exp (exp)
+                       (simplificar (eval-expression exp env)))
+
+      ; evaluar(exp, x=v1, y=v2...) → sustituye símbolos y reduce
+      (evaluar-exp (exp id rhs ids rhss)
+                   (let* ((all-ids  (cons id ids))
+                          (all-rhss (cons rhs rhss))
+                          (sust-vals (map (lambda (e) (eval-expression e env)) all-rhss))
+                          (val       (eval-expression exp env)))
+                     (evaluar-sym val all-ids sust-vals)))
+
+      
       )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
@@ -459,6 +550,119 @@
                      (if (null? return-exps)
                          '()
                          (eval-expression (car return-exps) new-env)))))))
+
+
+
+;*******************************************************************************************
+;Simplificación de expresiones simbólicas
+
+;simplificar: expval -> expval
+;aplica reglas algebraicas recursivamente a una expresión simbólica
+(define simplificar
+  (lambda (val)
+    (if (not (symval? val))
+        val  ; número u otro valor concreto: ya está en forma mínima
+        (cases symval val
+          (sym-atom (name) val)
+          (sym-op (op left right)
+                  ; primero simplificar hijos (bottom-up, como indica el PDF)
+                  (let ((l (simplificar left))
+                        (r (simplificar right)))
+                    (aplicar-reglas op l r)))))))
+
+;aplicar-reglas: symbol expval expval -> expval
+;aplica las reglas del PDF para cada operador
+(define aplicar-reglas
+  (lambda (op l r)
+    (cond
+      ;; ---- SUMA ----
+      ((eq? op '+)
+       (cond
+         ((and (number? r) (= r 0)) l)                  ; x + 0 → x
+         ((and (number? l) (= l 0)) r)                  ; 0 + x → x
+         ((and (number? l) (number? r)) (+ l r))        ; c1 + c2 → evaluar
+         ; ((x + c1) + c2) → (x + (c1+c2))
+         ((and (symval? l) (number? r))
+          (cases symval l
+            (sym-op (op2 ll lr)
+                    (if (and (eq? op2 '+) (number? lr))
+                        (aplicar-reglas '+ ll (+ lr r))
+                        (sym-op '+ l r)))
+            (else (sym-op '+ l r))))
+         ; (c1 + (x + c2)) → ((c1+c2) + x)
+         ((and (number? l) (symval? r))
+          (cases symval r
+            (sym-op (op2 rl rr)
+                    (if (and (eq? op2 '+) (number? rl))
+                        (aplicar-reglas '+ (+ l rl) rr)
+                        (sym-op '+ l r)))
+            (else (sym-op '+ l r))))
+         (else (sym-op '+ l r))))
+
+      ;; ---- RESTA ----
+      ((eq? op '-)
+       (cond
+         ((and (number? r) (= r 0)) l)                  ; x - 0 → x
+         ((and (number? l) (number? r)) (- l r))        ; c1 - c2 → evaluar
+         (else (sym-op '- l r))))
+
+      ;; ---- MULTIPLICACIÓN ----
+      ((eq? op '*)
+       (cond
+         ((and (number? r) (= r 1)) l)                  ; x * 1 → x
+         ((and (number? l) (= l 1)) r)                  ; 1 * x → x
+         ((and (number? r) (= r 0)) 0)                  ; x * 0 → 0
+         ((and (number? l) (= l 0)) 0)                  ; 0 * x → 0
+         ((and (number? l) (number? r)) (* l r))        ; c1 * c2 → evaluar
+         ; ((x * c1) * c2) → (x * (c1*c2))
+         ((and (symval? l) (number? r))
+          (cases symval l
+            (sym-op (op2 ll lr)
+                    (if (and (eq? op2 '*) (number? lr))
+                        (aplicar-reglas '* ll (* lr r))
+                        (sym-op '* l r)))
+            (else (sym-op '* l r))))
+         ; (c1 * (x * c2)) → ((c1*c2) * x)
+         ((and (number? l) (symval? r))
+          (cases symval r
+            (sym-op (op2 rl rr)
+                    (if (and (eq? op2 '*) (number? rl))
+                        (aplicar-reglas '* (* l rl) rr)
+                        (sym-op '* l r)))
+            (else (sym-op '* l r))))
+         (else (sym-op '* l r))))
+
+      ;; ---- DIVISIÓN ----
+      ((eq? op '/)
+       (cond
+         ((and (number? r) (= r 1)) l)                  ; x / 1 → x
+         ((and (number? l) (= l 0)) 0)                  ; 0 / x → 0
+         ((and (number? l) (number? r)) (/ l r))        ; c1 / c2 → evaluar
+         (else (sym-op '/ l r))))
+
+      (else (sym-op op l r)))))
+
+;Evaluación/sustitución de expresiones simbólicas
+
+;evaluar-sym: expval list-of-symbol list-of-expval -> expval
+;sustituye los símbolos por sus valores y simplifica el resultado
+(define evaluar-sym
+  (lambda (val ids sust-vals)
+    (if (not (symval? val))
+        val  ; valor concreto: no hay nada que sustituir
+        (cases symval val
+          (sym-atom (name)
+                    (let ((pos (list-find-position name ids)))
+                      (if (number? pos)
+                          (list-ref sust-vals pos)   ; sustituir por el valor dado
+                          val)))                      ; símbolo sin sustitución: queda igual
+          (sym-op (op left right)
+                  (let ((l (evaluar-sym left  ids sust-vals))
+                        (r (evaluar-sym right ids sust-vals)))
+                    ; después de sustituir, simplificar el nodo resultante
+                    (simplificar (sym-op op l r))))))))
+
+
 ;*******************************************************************************************
 ;Ambientes
 
@@ -547,7 +751,9 @@
         (string? x)
         (boolean? x)
         (null? x)
-        (procval? x))))
+        (procval? x)
+        (symval? x)
+        )))
 
 (define ref-to-direct-target?
   (lambda (x)
@@ -619,6 +825,68 @@
               (if (number? list-index-r)
                 (+ list-index-r 1)
                 #f))))))
+
+;env-bound?: environment symbol -> boolean
+;verifica si un símbolo ya existe en el ambiente sin lanzar error
+(define env-bound?
+  (lambda (env sym)
+    (cases environment env
+      (empty-env-record () #f)
+      (extended-env-record (syms vals env)
+                           (if (number? (rib-find-position sym syms))
+                               #t
+                               (env-bound? env sym))))))
+
+
+;;Funciones auxiliares para simbolos
+
+;prim-aritmetica?: primitive -> boolean
+;determina si una primitiva es aritmética (válida en expresiones simbólicas)
+(define prim-aritmetica?
+  (lambda (op)
+    (cases primitive op
+      (add-op () #t)
+      (sub-op () #t)
+      (mul-op () #t)
+      (div-op () #t)
+      (else   #f))))
+
+;prim->sym: primitive -> symbol
+;convierte el tipo primitiva al símbolo del operador para almacenarlo en sym-op
+(define prim->sym
+  (lambda (op)
+    (cases primitive op
+      (add-op () '+)
+      (sub-op () '-)
+      (mul-op () '*)
+      (div-op () '/)
+      (else (eopl:error 'prim->sym "Operador no aritmetico")))))
+
+;print-val: expval -> void
+;imprime cualquier valor expresado, incluyendo simbólicos
+(define print-val
+  (lambda (val)
+    (cond
+      ((symval? val)  (print-symval val))
+      ((boolean? val) (display (if val "true" "false")))
+      ((null? val)    (display "null"))
+      (else           (display val)))))
+
+;print-symval: symval -> void
+;imprime una expresión simbólica de forma legible
+(define print-symval
+  (lambda (sv)
+    (cases symval sv
+      (sym-atom (name)
+                (display name))
+      (sym-op (op left right)
+              (display "(")
+              (print-val left)
+              (display " ")
+              (display op)
+              (display " ")
+              (print-val right)
+              (display ")")))))
 
 ;******************************************************************************************
 
